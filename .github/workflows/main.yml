@@ -10,7 +10,6 @@ jobs:
       - name: Enable RDP
         run: |
           net user runneradmin Password123!
-          net localgroup administrators runneradmin /add
 
       - name: Download Ngrok
         run: |
