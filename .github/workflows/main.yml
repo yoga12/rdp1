@@ -1,21 +1,53 @@
-name: Windows RDP
+name: Free RDP
 
-on: workflow_dispatch
+on:
+  workflow_dispatch:  # Bisa dijalankan manual dari tab Actions
 
 jobs:
-  build:
+  rdp:
     runs-on: windows-latest
 
     steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-      - name: Download Ngrok
-        shell: powershell
-        run: |
-          Invoke-WebRequest https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
-          Expand-Archive ngrok.zip
-          dir
+    - name: Download and install ngrok
+      run: |
+        Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "ngrok.zip"
+        Expand-Archive -Path "ngrok.zip" -DestinationPath ".\ngrok" -Force
+        Remove-Item "ngrok.zip"
 
-      - name: Start Tunnel
-        shell: powershell
-        run: |
-          ./ngrok/ngrok.exe tcp 3389
+    - name: Configure ngrok
+      run: |
+        .\ngrok\ngrok.exe authtoken $env:NGROK_AUTH_TOKEN
+      env:
+        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+
+    - name: Enable RDP
+      run: |
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
+
+    - name: Set user password for runneradmin
+      run: |
+        $Password = ConvertTo-SecureString -String "P@ssw0rd123!" -AsPlainText -Force
+        Set-LocalUser -Name "runneradmin" -Password $Password
+
+    - name: Create ngrok tunnel for RDP
+      run: |
+        Start-Process -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 3389" -NoNewWindow
+
+    - name: Get ngrok URL
+      run: |
+        Start-Sleep -Seconds 10
+        $response = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
+        $tunnel = $response.tunnels | Where-Object { $_.proto -eq "tcp" }
+        Write-Output "RDP tunnel URL: $($tunnel.public_url)"
+        Write-Output "Username: runneradmin"
+        Write-Output "Password: P@ssw0rd123!"
+
+    - name: Keep alive (max 6 hours)
+      run: |
+        Write-Output "RDP siap digunakan. Workflow akan berjalan selama 6 jam."
+        Start-Sleep -Seconds 21600  # 6 jam
