@@ -1,7 +1,7 @@
 name: Free RDP
 
 on:
-  workflow_dispatch:  # Bisa dijalankan manual dari tab Actions
+  workflow_dispatch:
 
 jobs:
   rdp:
@@ -17,37 +17,64 @@ jobs:
         Expand-Archive -Path "ngrok.zip" -DestinationPath ".\ngrok" -Force
         Remove-Item "ngrok.zip"
 
-    - name: Configure ngrok
+    - name: Configure ngrok with token
       run: |
         .\ngrok\ngrok.exe authtoken $env:NGROK_AUTH_TOKEN
       env:
         NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
 
-    - name: Enable RDP
+    - name: Enable Remote Desktop
       run: |
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
 
-    - name: Set user password for runneradmin
+    - name: Set password for runneradmin
       run: |
         $Password = ConvertTo-SecureString -String "P@ssw0rd123!" -AsPlainText -Force
         Set-LocalUser -Name "runneradmin" -Password $Password
 
-    - name: Create ngrok tunnel for RDP
+    - name: Start ngrok tunnel for RDP
       run: |
         Start-Process -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 3389" -NoNewWindow
 
-    - name: Get ngrok URL
+    - name: Get ngrok public URL (with retry)
       run: |
-        Start-Sleep -Seconds 10
-        $response = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
-        $tunnel = $response.tunnels | Where-Object { $_.proto -eq "tcp" }
-        Write-Output "RDP tunnel URL: $($tunnel.public_url)"
-        Write-Output "Username: runneradmin"
-        Write-Output "Password: P@ssw0rd123!"
+        $maxRetries = 30
+        $retryCount = 0
+        $tunnelUrl = $null
 
-    - name: Keep alive (max 6 hours)
+        while ($retryCount -lt $maxRetries -and -not $tunnelUrl) {
+            try {
+                $response = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
+                $tunnel = $response.tunnels | Where-Object { $_.proto -eq "tcp" }
+                if ($tunnel) {
+                    $tunnelUrl = $tunnel.public_url
+                    Write-Output "✅ RDP tunnel URL: $tunnelUrl"
+                } else {
+                    Write-Output "⏳ Tunnel TCP belum tersedia, menunggu... (percobaan $($retryCount+1))"
+                }
+            } catch {
+                Write-Output "⏳ Ngrok API belum siap, menunggu... (percobaan $($retryCount+1))"
+            }
+            
+            if (-not $tunnelUrl) {
+                Start-Sleep -Seconds 5
+                $retryCount++
+            }
+        }
+
+        if (-not $tunnelUrl) {
+            Write-Error "❌ Gagal mendapatkan URL ngrok setelah $maxRetries percobaan."
+            exit 1
+        }
+
+        Write-Output "🔑 Username: runneradmin"
+        Write-Output "🔑 Password: P@ssw0rd123!"
+        Write-Output ""
+        Write-Output "🚀 Gunakan informasi di atas untuk mengakses RDP via client RDP atau browser."
+
+    - name: Keep workflow alive (max 6 hours)
       run: |
-        Write-Output "RDP siap digunakan. Workflow akan berjalan selama 6 jam."
-        Start-Sleep -Seconds 21600  # 6 jam
+        Write-Output "✅ RDP siap digunakan. Workflow akan berjalan selama 6 jam."
+        Start-Sleep -Seconds 21600   # 6 jam
